@@ -1,0 +1,91 @@
+heat_template_version: 2015-10-15
+
+description: generic setup private network/subnet/router
+
+parameters:
+  name:
+    type: string
+    label: Network Name
+    description: Name prefix.
+
+  cidr:
+    type: string
+    label: CIDR
+    description: Network CIDR.
+
+  gateway_ip:
+    type: string
+    label: Gateway
+    description: Gateway address on <cidr> network.
+
+  dns:
+    type: comma_delimited_list
+    label: DNS
+    description: DNS servers.
+    default: [ '8.8.8.8', '8.8.4.4' ]
+
+  dhcp_start:
+    type: string
+    label: Allocation pool start
+    description: Dhcp pool start address.
+
+  dhcp_end:
+    type: string
+    label: Allocation pool end
+    description: Dhcp pool end address.
+
+  public_net:
+    type: string
+    label: Public network
+    description: Public network to attach gateway.
+
+
+resources:
+  network:
+    type: OS::Neutron::Net
+    properties:
+      name:
+        list_join: ['-', [ {get_param: name}, 'network']]
+
+  subnet:
+    type: OS::Neutron::Subnet
+    properties:
+      name:
+        list_join: ['-', [ {get_param: name}, 'subnet']]
+      network: { get_resource: network }
+      cidr: { get_param: cidr }
+      gateway_ip: { get_param: gateway_ip }
+      dns_nameservers: { get_param: dns }
+      allocation_pools:
+        - start: { get_param: dhcp_start } 
+          end: { get_param: dhcp_end }
+
+  router:
+    type: OS::Neutron::Router
+    properties:
+      name:
+        list_join: ['-', [ {get_param: name}, 'router']]
+
+  router_gateway:
+    type: OS::Neutron::RouterGateway
+    properties:
+      router_id: { get_resource: router }
+      network_id: { get_param: public_net }
+
+  router_interface:
+    type: OS::Neutron::RouterInterface
+    properties:
+      router: { get_resource: router }
+      subnet: { get_resource: subnet }
+
+
+outputs:
+  network_id:
+    description: network uuid
+    value: { get_resource: network }
+  subnet_id:
+    description: subnet uuid
+    value: { get_resource: subnet }
+  router_id:
+    description: router uuid
+    value: { get_resource: router }

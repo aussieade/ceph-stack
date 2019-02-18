@@ -1,0 +1,38 @@
+parameter_defaults:
+  # Ceph Version
+  ceph_release: jewel
+  # SSH key-pair
+  key_name: ade-viltvodle
+
+parameters:
+  # Which glance image to use (for all instances)
+  image_id: centos-7.4
+  # Which instance type to use for the mons:
+  mon_flavor: m1.tiny
+  # Which instance type to use for the storage (OSD) nodes:
+  storage_node_flavor: m1.small
+  # Where to launch all the instances in this cluster:
+  az: nova
+
+  # Extra packages to install on the login node:
+  login_node_extra_packages: wget ntp ntpdate ntp-doc nfs-utils
+  # Extra packages to install on all nodes:
+  node_extra_packages: wget ntp ntpdate ntp-doc
+  # The total number of metadata servers (for cephfs)
+  metadata_node_count: 0
+  # The total number of Monitor Nodes:
+  mon_count: 3
+  # How many storage (OSD) nodes to create:
+  storage_node_count: 3
+  # For each storage node, how many volumes (OSDs):
+  osds_per_storage_node: 2
+  #The size of each OSD volume:
+  osd_volume_size_in_gb: 15
+
+  public_network: public
+  cidr: 10.11.8.0/24
+  gateway_ip: 10.11.8.1
+  dhcp_start: 10.11.8.51
+  dhcp_end: 10.11.8.249
+  dns: ['192.168.1.1']
+  domain_name: cloud.local.lan.

@@ -1,0 +1,78 @@
+heat_template_version: 2016-10-14
+
+description: >
+  A single storage node, with multiple volumes
+
+parameters:
+  image_id:
+    type: string
+  storage_node_flavor:
+    type: string
+  az:
+    type: string
+  key_name:
+    type: string
+  node_extra_packages:
+    type: string
+  osds_per_storage_node:
+    type: number
+  osd_volume_size_in_gb:
+    type: number
+  storage_node_name:
+    type: string
+  node_extra_packages:
+    type: string
+  network:
+    type: string
+  stack_name:
+    type: string
+
+resources:
+  storage-node:
+    type: OS::Nova::Server
+    properties:
+      metadata:
+        ansible_stack:
+          str_replace:
+            template: $stackname
+            params:
+              $stackname: { get_param: stack_name }
+        ansible_role:
+          str_replace:
+            template: storage-$stackname
+            params:
+              $stackname: { get_param: stack_name }
+      image: { get_param: image_id }
+      flavor: { get_param: storage_node_flavor }
+      key_name: { get_param: key_name }
+      availability_zone: { get_param: az }
+      networks:
+        - network: { get_param: network }
+      security_groups:
+        - str_replace:
+            template: external-inbound-$name
+            params:
+              $name: { get_param: stack_name }
+        - str_replace:
+            template: cluster-internal-$name
+            params:
+              $name: { get_param: stack_name }
+      name: { get_param: storage_node_name }
+      user_data:
+        str_replace:
+          template:
+            get_file: node.sh
+          params:
+            $EXTRA_PACKAGES: { get_param: node_extra_packages }
+
+  group_of_volumes:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: { get_param: osds_per_storage_node }
+      resource_def:
+        type: volume_template.yaml
+        properties:
+          stack_name: { get_param: stack_name }
+          instance_id: { get_resource: storage-node }
+          osd_volume_size_in_gb: { get_param: osd_volume_size_in_gb }
+          az: { get_param: az }

@@ -1,0 +1,264 @@
+heat_template_version: 2016-10-14
+
+parameters:
+  image_id:
+    type: string
+  mon_flavor:
+    type: string
+  storage_node_flavor:
+    type: string
+  az:
+    type: string
+  key_name:
+    type: string
+
+  ceph_release:
+    type: string
+  login_node_extra_packages:
+    type: string
+  node_extra_packages:
+    type: string
+  mon_count:
+    type: number
+  metadata_node_count:
+    type: number
+  storage_node_count:
+    type: number
+  osds_per_storage_node:
+    type: number
+  osd_volume_size_in_gb:
+    type: number
+
+  dns:
+    type: comma_delimited_list
+  cidr:
+    type: string
+  gateway_ip:
+    type: string
+  dhcp_start:
+    type: string
+  dhcp_end:
+    type: string
+  public_network:
+    type: string
+  domain_name:
+    type: string
+
+resources:
+  network:
+    type: network_template.yaml
+    properties:
+      name: { get_param: "OS::stack_name" }
+      dns: { get_param: dns }
+      cidr: { get_param: cidr }
+      gateway_ip: { get_param: gateway_ip }
+      dhcp_start: { get_param: dhcp_start }
+      dhcp_end: { get_param: dhcp_end }
+      public_net: { get_param: public_network }
+
+  cluster_internal:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name:
+        str_replace:
+          template: cluster-internal-$name
+          params:
+            $name: { get_param: "OS::stack_name" }
+      description: all ports open but only to other cluster nodes
+      rules:
+        - protocol: icmp
+          remote_mode: remote_group_id
+        - protocol: tcp
+          remote_mode: remote_group_id
+
+  external_inbound:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name:
+        str_replace:
+          template: external-inbound-$name
+          params:
+            $name: { get_param: "OS::stack_name" }
+      description: ssh and ping from anywhere
+      rules:
+        - protocol: icmp
+        - protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+
+  storage-nodes:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: { get_param: storage_node_count }
+      resource_def:
+        type: storagenode_template.yaml
+        properties:
+          node_extra_packages: { get_param: node_extra_packages }
+          image_id: { get_param: image_id }
+          storage_node_flavor: { get_param: storage_node_flavor }
+          osds_per_storage_node: { get_param: osds_per_storage_node }
+          key_name: { get_param: key_name }
+          osd_volume_size_in_gb: { get_param: osd_volume_size_in_gb }
+          network: { get_attr: [ network, network_id ] }
+          az: { get_param: az }
+          stack_name: { get_param: "OS::stack_name" }
+          storage_node_name:
+            str_replace:
+              template: stg%index%-$name
+              params:
+                $name: { get_param: "OS::stack_name" }
+
+  mons:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: { get_param: mon_count }
+      resource_def:
+        type: OS::Nova::Server
+        properties:
+          metadata:
+            ansible_stack:
+              str_replace:
+                template: $stackname
+                params:
+                  $stackname: { get_param: "OS::stack_name" }
+            ansible_role:
+              str_replace:
+                template: mon-$stackname
+                params:
+                  $stackname: { get_param: "OS::stack_name" }
+          key_name: { get_param: key_name }
+          image: { get_param: image_id }
+          flavor: { get_param: mon_flavor }
+          availability_zone: { get_param: az }
+          networks:
+            - network: { get_attr: [ network, network_id ] }
+          security_groups:
+            - {get_resource: external_inbound}
+            - {get_resource: cluster_internal}
+          name:
+            str_replace:
+              template: mon%index%-$name
+              params:
+                $name: { get_param: "OS::stack_name" }
+          user_data:
+            str_replace:
+              template:
+                get_file: node.sh
+              params:
+                $EXTRA_PACKAGES: { get_param: node_extra_packages }
+
+  metadata-nodes:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: { get_param: metadata_node_count }
+      resource_def:
+        type: OS::Nova::Server
+        properties:
+          metadata:
+            ansible_stack:
+              str_replace:
+                template: $stackname
+                params:
+                  $stackname: { get_param: "OS::stack_name" }
+            ansible_role:
+              str_replace:
+                template: mds-$stackname
+                params:
+                  $stackname: { get_param: "OS::stack_name" }
+          key_name: { get_param: key_name }
+          image: { get_param: image_id }
+          flavor: { get_param: mon_flavor }
+          availability_zone: { get_param: az }
+          networks:
+            - network: { get_attr: [ network, network_id ] }
+          security_groups:
+            - {get_resource: external_inbound}
+            - {get_resource: cluster_internal}
+          name:
+            str_replace:
+              template: mds%index%-$name
+              params:
+                $name: { get_param: "OS::stack_name" }
+          user_data:
+            str_replace:
+              template:
+                get_file: node.sh
+              params:
+                $EXTRA_PACKAGES: { get_param: node_extra_packages }
+
+  login-port:
+    type: OS::Neutron::Port
+    properties:
+      name:
+        list_join: ['-', [{ get_param: "OS::stack_name" }, 'login-node-port']]
+      network: { get_attr: [ network, network_id ] }
+      fixed_ips:
+        - subnet_id: { get_attr: [ network, subnet_id ] }
+      security_groups:
+        - {get_resource: external_inbound}
+        - {get_resource: cluster_internal}
+
+  login-public:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network_id: { get_param: public_network }
+      port_id: { get_resource: login-port }
+      dns_domain: { get_param: domain_name }
+      dns_name:
+        str_replace:
+          template: login-$name
+          params:
+            $name: { get_param: "OS::stack_name" }
+
+  login-node:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: 1
+      resource_def:
+        type: OS::Nova::Server
+        properties:
+          metadata:
+            ansible_stack:
+              str_replace:
+                template: $stackname
+                params:
+                  $stackname: { get_param: "OS::stack_name" }
+            ansible_role:
+              str_replace:
+                template: login-$stackname
+                params:
+                  $stackname: { get_param: "OS::stack_name" }
+          key_name: { get_param: key_name }
+          image: { get_param: image_id }
+          flavor: { get_param: storage_node_flavor }
+          availability_zone: { get_param: az }
+          networks:
+            - port: { get_resource: login-port }
+          name:
+            str_replace:
+              template: admin-$name
+              params:
+                $name: { get_param: "OS::stack_name" }
+          user_data:
+            str_replace:
+              template:
+                get_file: admin.sh
+              params:
+                $EXTRA_PACKAGES: { get_param: login_node_extra_packages }
+                $CEPH_VERSION: { get_param: ceph_release }
+                $STACK_TAG: { get_param: "OS::stack_name" }
+                $NETWORK: { get_param: cidr }
+
+outputs:
+  login-node-public-name:
+    description: Cluster admin public hostname
+    value: { list_join: ['-', ['login', { get_param: "OS::stack_name" }] ] }
+  login-node-public-ip:
+    description: Cluster admin public address
+    value: { get_attr: [login-public, floating_ip_address] }
+  login-node-internal-name:
+    description: Cluster admin internal hostname
+    value: { get_attr: [login-node, name] }
+  ceph_release:
+    description: Initial stack ceph release
+    value: { get_param: ceph_release }
